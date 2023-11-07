@@ -110,6 +110,9 @@ module FIFO_async #(
 
     always @(posedge clock_wr) begin
         if (!reset_wr_n) begin
+            // This behavior isn't clear to me yet. The most 'clear' solution
+            // to me at this point due to the different reset domains.
+            // I still need to read up on the reset's paper
             wr_index <= 0;
         else
             if (write_en) begin
@@ -131,7 +134,9 @@ module FIFO_async #(
     end
 
     always @(posedge clock_rd) begin
-        // Do we want synchronous reset?
+        // This behavior isn't clear to me yet. The most 'clear' solution
+        // to me at this point due to the different reset domains.
+        // I still need to read up on the reset's paper
         if (!reset_rd_n) begin
             rd_index <= 0;
         else

@@ -70,10 +70,12 @@ always @(*) begin
 end
 
 always @(posedge clock) begin
-    // Do we want synchronous reset?
     if (!reset_n) begin
         wr_index <= 0;
         rd_index <= 0;
+        // It's not really that important to reset the memory since we won't be
+        // /shouldn't/ be using any un-initialized data. ie. We will write to
+        // memory before we even read from it
     else
         if (write_en) begin
             if (!fifo_full_s) begin
