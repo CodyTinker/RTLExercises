@@ -74,7 +74,9 @@ module FIFO_async #(
     //       counters to avoid misaligned data bits when crossing the clock domains
     //       ie. Only a single bit will change when updating the value and synchronizing
     wire [FIFO_DEPTH:0] wr_index_graycode; // Part of the clock_wr clock domain
+    wire [FIFO_DEPTH:0] wr_index_graycode_reg; // Part of the clock_wr clock domain, for setup to clock_rd domain
     wire [FIFO_DEPTH:0] rd_index_graycode; // Part of the clock_rd clock domain
+    wire [FIFO_DEPTH:0] rd_index_graycode_reg; // Part of the clock_rd clock domain, for setup to clock_wr domain
 
     // Assumption: we have a bin2gray and gray2bin modules
     // Alternatively, we can just use a clocked gray counter module as well, may save some logic
@@ -111,9 +113,11 @@ module FIFO_async #(
                 Write clock domain
     ****************************************************************/
 
-    // Synchronizers
+    // Write clock domain flip-flops
     always @(posedge clock_wr) begin
-        rd_index_wrclk_sync[0] <= rd_index;
+        wr_index_graycode_reg <= wr_index_graycode;
+        // Synchronizers
+        rd_index_wrclk_sync[0] <= rd_index_graycode_reg;
         rd_index_wrclk_sync[1] <= rd_index_wrclk_sync[0];
     end
 
@@ -135,10 +139,15 @@ module FIFO_async #(
         end
     end
 
-    // Read clock domain
-    // Synchronizers
+    /****************************************************************
+                Read clock domain
+    ****************************************************************/
+
+    // Read clock domain flip-flops
     always @(posedge clock_rd) begin
-        wr_index_rdclk_sync[0] <= wr_index;
+        rd_index_graycode_reg <= rd_index_graycode;
+        // Synchronizers
+        wr_index_rdclk_sync[0] <= wr_index_graycode_reg;
         wr_index_rdclk_sync[1] <= wr_index_rdclk_sync[0];
     end
 
