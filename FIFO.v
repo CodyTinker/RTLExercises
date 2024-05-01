@@ -2,6 +2,9 @@
 Design a 32-entry FIFO (data width is e.g. 8 bits).
 Bonus: FIFO depth and number of entries are parameterized
 
+Parameters:
+    FIFO_DEPTH: Entry depth of the FIFO. FIFO will store 2**(FIFO_DEPTH) entries.
+    DATA_WIDTH: Data width size of a single entry in DATA_WIDTH bits.
 Interface:
     input clock;
     input reset_n;
@@ -23,14 +26,14 @@ Interface:
 ******************************************************************************/
 
 module FIFO #(
-    FIFO_SIZE = 32;
+    FIFO_DEPTH = 4; // Number of entries is 2**FIFO_DEPTH
     DATA_WIDTH = 8;
 ) (
     input clock;
     input reset_n;
 
     // Write
-    input[DATA_WIDTH:0]     data_in;    //Width will be parameterized for the bonus
+    input[DATA_WIDTH-1:0]   data_in;    //Width will be parameterized for the bonus
     input                   write_en;   //Indicates valid data on the data_in,
                                         //data should be written into the FIFO in the
                                         //same clock cycle
@@ -38,31 +41,34 @@ module FIFO #(
                                         //fifo_full is asserted
 
     // Read
-    output [DATA_WIDTH:0]   data_out;   //Width will be parameterized for the bonus
+    output [DATA_WIDTH-1:0] data_out;   //Width will be parameterized for the bonus
     input                   read_en;    //Read enable, data_out is valid 1 clock cycle
                                         //after assertion of this signal
     output                  fifo_empty; //The receiver will not assert read_en when
                                         //fifo_empty is asserted
 );
 
-localparam FIFO_DEPTH = $clog2(FIFO_SIZE); // Had to look up clog2 function
-
-// Allocate size+1 for the FIFO memory for easier fifo full check logic
-// at the expense of 1 unused word of memory.
-reg [DATA_WIDTH:0] memory [FIFO_SIZE+1:0];
-reg [FIFO_DEPTH:0] wr_index;
-reg [FIFO_DEPTH:0] rd_index;
+reg [DATA_WIDTH-1:0] memory [FIFO_DEPTH-1:0];
+// Read and write counters allocate one extra bit width. The upper
+// bit is reserved for a rollover flag to check if the read pointer
+// is 'catching up' to the write pointer for full and empty flag
+// checking
+reg [FIFO_DEPTH:0] wr_index_ctr;
+reg [FIFO_DEPTH:0] rd_index_ctr;
+wire [FIFO_DEPTH-1:0] wr_index;
+wire [FIFO_DEPTH-1:0] rd_index;
+assign wr_index = wr_index_ctr[FIFO_DEPTH-1:0];
+assign rd_index = rd_index_ctr[FIFO_DEPTH-1:0];
 
 wire fifo_full_s;
 wire fifo_empty_s;
 
 always @(*) begin
-
     // If the read pointer is mapped to the same (ex. such as at reset), flag the fifo as 'empty'
-    fifo_empty_s = (wr_index == rd_index) ? 1 : 0;
+    fifo_empty_s = (wr_index == rd_index) and (wr_index_ctr[FIFO_DEPTH] == rd_index_ctr[FIFO_DEPTH]);
 
-    // If write pointer is leading right behind the read pointer, flag the fifo as 'full'
-    fifo_full_s = ((wr_index+1 % FIFO_SIZE) == rd_index) ? 1 : 0;
+    // If write pointer is leading ahead (ie. counter has rolled-over), flag the fifo as 'full'
+    fifo_full_s = (wr_index == rd_index) and (wr_index_ctr[FIFO_DEPTH] != rd_index_ctr[FIFO_DEPTH]);
 
     // Assign the ports to flag signals
     fifo_empty = fifo_empty_s;
@@ -80,7 +86,7 @@ always @(posedge clock) begin
         if (write_en) begin
             if (!fifo_full_s) begin
                 memory[wr_index] <= data_in;
-                wr_index <= (wr_index + 1) % FIFO_SIZE; // Increment and wrap around the write pointer
+                wr_index_ctr <= wr_index_ctr + 1; // Increment and wrap around the write pointer
             else
                 // We could put some sort of assertion here if the design demands it for catching errors in simulation
             end
@@ -92,7 +98,7 @@ always @(posedge clock) begin
             if (!fifo_empty_s) begin
                 // Advances the read pointer but the data_out will not update till next clock cycle
                 // such that the data_out is ready by the time the driver asserts the read_en and 1 cycle after
-                rd_index <= (rd_index + 1) % FIFO_SIZE; // Increment and wrap around the read pointer
+                rd_index_ctr <= rd_index_ctr + 1; // Increment and wrap around the read pointer
             else
                 // We could put some sort of assertion here if the design demands it for catching errors in simulation
             end
