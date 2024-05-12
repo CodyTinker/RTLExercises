@@ -195,34 +195,22 @@ module apb2axi_proxy #(
     // output                  proxy_CACTIVE;
 );
 
-    localparam CONFIG_ADDR      = 'h00;
-    localparam ADDR_LOW_ADDR    = 'h04;
-    localparam ADDR_HIGH_ADDR   = 'h08;
-    localparam DATA_0_ADDR      = 'h0C;
-    localparam DATA_1_ADDR      = 'h10;
-    localparam DATA_2_ADDR      = 'h14;
-    localparam DATA_3_ADDR      = 'h18;
-    localparam CTRL_ADDR        = 'h1C;
-    localparam STS_ADDR         = 'h20;
-    localparam SCRATCH_ADDR     = 'h24;
+    /****************************************/
+    /***          APB Domain              ***/
+    /****************************************/
 
-    // Register base
-    reg [3:0]   pio_registers_mem [31:0]
-
-    /*          APB Domain              */
-
-    // Sync boundary Flops
+    // APB-to-Register Sync boundary Flops
     reg [ADDR_WIDTH-1:0] addr_handoff;
     reg [DATA_WIDTH-1:0] wr_data_handoff;
     reg pwrite_handoff;
-    reg [ADDR_WIDTH-1:0] rd_data_sync;
+    reg [DATA_WIDTH-1:0] rd_data_sync;
+    reg handoff_ack_sync [1:0];
 
     // State machine signals
     wire transmit_sync;
     reg transmit_sync_toggle;
     wire handoff_ack_pulse;
     wire apb_pready_s;
-    reg handoff_ack_sync [1:0];
 
     reg [2:0] state, next_state;
 
@@ -271,6 +259,7 @@ module apb2axi_proxy #(
         next_state = state;
         case (state)
             SM_APB__IDLE: begin
+                apb_pready_s = 0;
                 if (i_proxy_PSEL && !i_proxy_PENABLE) begin
                     next_state = SM_APB__SETUP;
                 end
@@ -297,5 +286,73 @@ module apb2axi_proxy #(
         endcase
     end
     assign o_proxy_PREADY = apb_pready_s;
+
+    /****************************************/
+    /***         Register Domain          ***/
+    /****************************************/
+    localparam CONFIG_ADDR      = 'h00;
+    localparam ADDR_LOW_ADDR    = 'h04;
+    localparam ADDR_HIGH_ADDR   = 'h08;
+    localparam DATA_0_ADDR      = 'h0C;
+    localparam DATA_1_ADDR      = 'h10;
+    localparam DATA_2_ADDR      = 'h14;
+    localparam DATA_3_ADDR      = 'h18;
+    localparam CTRL_ADDR        = 'h1C;
+    localparam STS_ADDR         = 'h20;
+    localparam SCRATCH_ADDR     = 'h24;
+
+    localparam LOW_ADDR_BOUND   = CONFIG_ADDR;
+    localparam HIGH_ADDR_BOUND  = SCRATCH_ADDR;
+
+    // Register base
+    reg [31:0]   pio_registers_mem [7:0];
+
+    // APB-to-Register sync barrier
+    wire [DATA_WIDTH-1:0] pio_rd_data;
+    reg [DATA_WIDTH-1:0] pio_wr_data;
+    reg [ADDR_WIDTH-1:0] pio_addr_flop;
+    wire [7:0] pio_addr;
+    reg pio_wr_en;
+
+    // Technically we dont need to flop the entire ADDR_WIDTH from the APB since
+    // the register depth is only 8-bits wide but keeping here for example simplicity
+    // and we may need it for error detection or other reasons
+    // Obviously a full spec'd design would trim this out as needed.
+    assign pio_addr[7:0] = pio_addr_flop[7:0];
+
+    wire handoff_enable_pulse;
+    reg handoff_enable_sync [1:0];
+    reg handoff_ack_delay_0;
+    reg handoff_ack;
+
+
+    // Flops
+    always @(posedge clock) begin
+        if (handoff_enable_pulse) begin
+            pio_addr <= addr_handoff;
+            pio_wr_data <= wr_data_handoff;
+        end
+
+        pio_wr_en <= pwrite_handoff & handoff_enable_pulse;
+
+        // PIO-to-APB domain synchronizer
+        handoff_enable_sync[0] <= transmit_sync_toggle;
+        handoff_enable_sync[1] <= handoff_enable_sync[0];
+        handoff_enable_sync[2] <= handoff_enable_sync[1];
+
+        handoff_enable_pulse <= handoff_enable_sync ^ handoff_enable_sync;
+
+         // Delaying handoff ack by two cycles to setup rd data
+        handoff_ack_delay_0 <= handoff_enable_sync[2];
+        handoff_ack <= handoff_ack_delay_0;
+    end
+
+    // Register Memory
+    always @(posedge clock) begin
+        if (pio_wr_en) begin
+            pio_registers_mem[pio_addr] <= pio_wr_data;
+        end
+    end
+    pio_rd_data <= pio_registers_mem[pio_addr]; // Just mux it out
 
 endmodule
