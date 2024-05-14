@@ -304,15 +304,22 @@ module apb2axi_proxy #(
     localparam LOW_ADDR_BOUND   = CONFIG_ADDR;
     localparam HIGH_ADDR_BOUND  = SCRATCH_ADDR;
 
-    // Register base
-    reg [31:0]   pio_registers_mem [7:0];
+    // Registers and bit mappings
+    reg [31:0]  pio_registers_mem [7-2:0]; // Register memory, 4B aligned
+    wire        REG_CONFIG_req_type;
+    wire [31:0] REG_ADDR_LOW_addr;
+    wire [9:0]  REG_ADDR_HIGH_addr;
+    wire [31:0] REG_DATA_0, REG_DATA_1, REG_DATA_2, REG_DATA_3;
+    wire        REG_CTRL_transfer;
+    wire [1:0]  REG_STS_status;
+
 
     // APB-to-Register sync barrier
     wire [DATA_WIDTH-1:0] pio_rd_data;
     reg [DATA_WIDTH-1:0] pio_wr_data;
     reg [ADDR_WIDTH-1:0] pio_addr_flop;
     wire [7:0] pio_addr;
-    reg pio_wr_en;
+    reg pio_wr_en, enable_pulse;
 
     // Technically we dont need to flop the entire ADDR_WIDTH from the APB since
     // the register depth is only 8-bits wide but keeping here for example simplicity
@@ -322,8 +329,11 @@ module apb2axi_proxy #(
 
     wire handoff_enable_pulse;
     reg handoff_enable_sync [1:0];
-    reg handoff_ack_delay_0;
-    reg handoff_ack;
+    // Delaying handoff handshake ack to also ensure rd_data is setup in time
+    // Technically, this does delay write data transactions unncessarily by
+    // a couple of Register clock domain cycle but it keeps the design a bit
+    // simple for now
+    reg handoff_ack, handoff_ack_delay;
 
 
     // Flops
@@ -331,9 +341,9 @@ module apb2axi_proxy #(
         if (handoff_enable_pulse) begin
             pio_addr <= addr_handoff;
             pio_wr_data <= wr_data_handoff;
+            pio_wr_en < = pwrite_handoff;
         end
-
-        pio_wr_en <= pwrite_handoff & handoff_enable_pulse;
+        enable_pulse <= handoff_enable_pulse;
 
         // PIO-to-APB domain synchronizer
         handoff_enable_sync[0] <= transmit_sync_toggle;
@@ -343,16 +353,24 @@ module apb2axi_proxy #(
         handoff_enable_pulse <= handoff_enable_sync ^ handoff_enable_sync;
 
          // Delaying handoff ack by two cycles to setup rd data
-        handoff_ack_delay_0 <= handoff_enable_sync[2];
-        handoff_ack <= handoff_ack_delay_0;
+        handoff_ack_delay <= handoff_enable_sync[2];
+        handoff_ack <= handoff_ack_delay;
     end
 
     // Register Memory
     always @(posedge clock) begin
         if (pio_wr_en) begin
-            pio_registers_mem[pio_addr] <= pio_wr_data;
+            if (pio_wr_en & enable_pulse) begin
+                // We could also do addr and wr_data masking checks here for special register
+                // cases. Ex. Some bits of a register may be assigned to read-only,
+                // check address alignment, ect.
+                pio_registers_mem[pio_addr] <= pio_wr_data;
+            end
         end
     end
-    pio_rd_data <= pio_registers_mem[pio_addr]; // Just mux it out
+    // Just muxing the register rd_data out so that it can make setup time for the
+    // sync barrier before the handoff_ack delay flops pass back the handshake to the
+    // APB clock domain
+    pio_rd_data <= pio_registers_mem[pio_addr];
 
 endmodule
